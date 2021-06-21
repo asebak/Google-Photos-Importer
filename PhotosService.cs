@@ -92,7 +92,7 @@ namespace exporter
 
             foreach (var f in files)
             {
-                var match = mediaItems.MediaItems.FirstOrDefault(stringToCheck => stringToCheck.Filename.Contains(f.Name));
+                var match = mediaItems.MediaItems?.FirstOrDefault(stringToCheck => stringToCheck.Filename.Contains(f.Name));
                 if (match != null)
                 {
                     continue;
@@ -174,6 +174,8 @@ namespace exporter
             public PhotosResource(Google.Apis.Services.IClientService service)
             {
                 this.service = service;
+                this.service.HttpClient.Timeout = TimeSpan.FromMinutes(5);
+
             }
 
             public async Task<MediaList> GetMediaByAlbumAsync(string albumId)
