@@ -18,6 +18,7 @@
   <ItemGroup>
     <PackageReference Include="Google.Apis.Auth" Version="1.52.0" />
     <PackageReference Include="Google.Apis.Discovery.v1" Version="1.52.0" />
+    <PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
   </ItemGroup>
 
 </Project>

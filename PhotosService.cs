@@ -4,9 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Google.Apis.Services;
 using Newtonsoft.Json;
+using MimeTypes;
 
 namespace exporter
 {
@@ -21,6 +23,16 @@ namespace exporter
 
         }
 
+        static string[] mediaExtensions = {
+    ".PNG", ".JPG", ".JPEG", ".BMP", ".GIF", //etc
+    ".WAV", ".MID", ".MIDI", ".WMA", ".MP3", ".OGG", ".RMA", //etc
+    ".AVI", ".MP4", ".DIVX", ".WMV" };
+
+
+    static bool IsMediaFile(string path)
+        {
+            return -1 != Array.IndexOf(mediaExtensions, Path.GetExtension(path).ToUpperInvariant());
+        }
         public override string Name => "photos";
 
         public override string BaseUri => "https://photoslibrary.googleapis.com/";
@@ -32,7 +44,9 @@ namespace exporter
         private async Task<List<MediaItem>> CreateHeirachy()
         {
             var directoryInfo = PrepareDirectory();
+            UploadFolderContentsAsync(null, directoryInfo);
             var directories = directoryInfo.GetDirectories();
+       
             var existingAlbumListComputerGenerated = await GetAlbumsAsync();
             foreach (var d in directories)
             {
@@ -63,6 +77,41 @@ namespace exporter
         private void UploadFolderContentsAsync(Album album, DirectoryInfo dire)
         {
             var files = dire.GetFiles().ToList();
+            //todo check if eeach file is media fiule
+            foreach(var f in files)
+            {
+                var data =  this.resource.UploadBytesAsync(f).Result;
+                if(!string.IsNullOrEmpty(data))
+                {
+                    //upload directly 
+                    var result = this.resource.BatchCreateAsync(new NewMediaList
+                    {
+                        AlbumId = album == null ? string.Empty : album.id,
+                        NewMediaItems = new List<NewMediaItem>
+                            {
+                                new NewMediaItem
+                                {
+                                    simpleMediaItem = new SimpleMediaItem
+                                    {
+                                        uploadToken = data,
+                                        fileName = f.Name
+                                    },
+                                    description = string.Empty
+                                }
+                            }
+                    }).Result;
+
+                    if(result != null && album != null) 
+                    {
+                        var addedToAlbum = this.resource.BatchAddMediaItemsAsync(album.id, new MediaItemIds
+                        {
+                            Ids = result.newMediaItemResults.Select(x => x.mediaItem.Id).ToList()
+                        }).Result;
+                        Console.WriteLine($"Added to Album: {album.title}");
+                    }
+                }
+            }
+
         }
 
         private async Task<List<Album>> GetAlbumsAsync()
@@ -87,12 +136,8 @@ namespace exporter
 
         public async Task ImportMediaAsync()
         {
-            var mediaList = await CreateHeirachy();
-
-            foreach (var item in mediaList)
-            {
-               // UploadMedia(item, directory);
-            }
+             await CreateHeirachy();
+  
         }
 
  
@@ -139,6 +184,76 @@ namespace exporter
                 var result = await this.service.HttpClient.PostAsync(new Uri($"{service.BaseUri}/v1/albums"), content);
                 var data = JsonConvert.DeserializeObject<Album>(result.Content.ReadAsStringAsync().Result);
                 return data;
+            }
+
+
+            //uploads data
+            public async Task<string> UploadBytesAsync(FileInfo file)
+            {
+                if(!IsMediaFile(file.Name))
+                {
+                    return string.Empty;
+                }
+                Console.WriteLine($"Uploading: {file.Name}");
+            
+                var filebytes = File.ReadAllBytes(file.FullName);
+
+                using (var content = new ByteArrayContent(filebytes))
+                {
+                    content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                    content.Headers.Add("X-Goog-Upload-Content-Type", MimeTypeMap.GetMimeType(file.Extension)); //todo fill this in via library from the filename
+                    content.Headers.Add("X-Goog-Upload-Protocol", "raw");
+                    var result = await this.service.HttpClient.PostAsync(new Uri($"{service.BaseUri}/v1/uploads"), content);
+                    var uploadToken = await result.Content.ReadAsStringAsync();
+                    return uploadToken;
+                }
+
+            }
+
+
+            //creates media item
+            public async Task<NewMediaItemResultRoot> BatchCreateAsync(NewMediaList newMediaList)
+            {
+
+                var maxBatchSize = 50;
+                for (int i = 0; i < newMediaList.NewMediaItems.Count; i += maxBatchSize)
+                {
+                    var list = new NewMediaList {
+                        NewMediaItems = new List<NewMediaItem>(),
+                        AlbumId = newMediaList.AlbumId
+                    };
+
+                    list.NewMediaItems.AddRange(newMediaList.NewMediaItems.GetRange(i, Math.Min(maxBatchSize, newMediaList.NewMediaItems.Count - i)));
+
+
+                    var content = new StringContent(JsonConvert.SerializeObject(newMediaList));
+                    var result = await this.service.HttpClient.PostAsync(new Uri($"{service.BaseUri}/v1/mediaItems:batchCreate"), content);
+                    var data = JsonConvert.DeserializeObject<NewMediaItemResultRoot>(result.Content.ReadAsStringAsync().Result);
+                    return data;
+                }
+
+                return null;
+            }
+
+            //batches media items to an album
+            public async Task<bool> BatchAddMediaItemsAsync(string albumId, MediaItemIds mediaItemIds)
+            {
+                var maxBatchSize = 50;
+                for (int i = 0; i < mediaItemIds.Ids.Count; i += maxBatchSize)
+                {
+                    var list = new MediaItemIds
+                    {
+                        Ids = new List<string>()
+                    };
+
+                    list.Ids.AddRange(mediaItemIds.Ids.GetRange(i, Math.Min(maxBatchSize, mediaItemIds.Ids.Count - i)));
+
+                    var content = new StringContent(JsonConvert.SerializeObject(mediaItemIds));
+                    var result = await this.service.HttpClient.PostAsync(new Uri($"{service.BaseUri}/v1/albums/{albumId}:batchAddMediaItems"), content);
+                    var data = JsonConvert.DeserializeObject<Album>(result.Content.ReadAsStringAsync().Result);
+                }
+
+                return true;
             }
 
         }
@@ -205,6 +320,34 @@ namespace exporter
             public string NextPageToken { get; set; }
         }
 
+        public class NewMediaList
+        {
+            [JsonProperty("newMediaItems")]
+            public List<NewMediaItem> NewMediaItems { get; set; }
+
+            [JsonProperty("albumId")]
+            public string AlbumId { get; set; }
+        }
+
+        public class SimpleMediaItem
+        {
+            public string fileName { get; set; }
+            public string uploadToken { get; set; }
+        }
+
+        public class NewMediaItem
+        {
+            public string description { get; set; }
+            public SimpleMediaItem simpleMediaItem { get; set; }
+        }
+
+        public class MediaItemIds
+        {
+            [JsonProperty("mediaItemIds")]
+            public List<string> Ids { get; set; }
+
+        }
+
         public class AlbumList
         {
             [JsonProperty("albums")]
@@ -246,5 +389,28 @@ namespace exporter
         {
             public Album album { get; set; }
         }
+
+
+
+        public class Status
+        {
+            public string message { get; set; }
+            public int? code { get; set; }
+        }
+
+
+
+        public class NewMediaItemResult
+        {
+            public string uploadToken { get; set; }
+            public Status status { get; set; }
+            public MediaItem mediaItem { get; set; }
+        }
+
+        public class NewMediaItemResultRoot
+        {
+            public List<NewMediaItemResult> newMediaItemResults { get; set; }
+        }
+
     }
 }
