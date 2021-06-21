@@ -24,8 +24,8 @@ namespace exporter
         }
 
         static string[] mediaExtensions = {
-    ".PNG", ".JPG", ".JPEG", ".BMP", ".GIF", //etc
-    ".WAV", ".MID", ".MIDI", ".WMA", ".MP3", ".OGG", ".RMA", //etc
+    ".PNG", ".JPG", ".JPEG", ".BMP", ".GIF", 
+    ".WAV", ".MID", ".MIDI", ".WMA", ".MP3", ".OGG", ".RMA", 
     ".AVI", ".MP4", ".DIVX", ".WMV" };
 
 
@@ -63,11 +63,13 @@ namespace exporter
                     });
                     if(result != null)
                     {
+                        Console.WriteLine($"Created new album: {result.title}");
                         UploadFolderContentsAsync(result, d);
                     }
                 }
                 else
                 {
+                    Console.WriteLine($"Using existing album: {match.title}");
                     UploadFolderContentsAsync(match, d);
                 }
             }
@@ -77,10 +79,25 @@ namespace exporter
         private void UploadFolderContentsAsync(Album album, DirectoryInfo dire)
         {
             var files = dire.GetFiles().ToList();
-            //todo check if eeach file is media fiule
-            foreach(var f in files)
+            //todo get media items in album, then check if it already exists, if it does skip it to optimize performance. 
+            MediaList mediaItems = new MediaList
             {
-                var data =  this.resource.UploadBytesAsync(f).Result;
+                MediaItems = new List<MediaItem>()
+            };
+
+            if(album != null)
+            {
+                mediaItems = this.resource.GetMediaByAlbumAsync(album.id).Result;
+            }
+
+            foreach (var f in files)
+            {
+                var match = mediaItems.MediaItems.FirstOrDefault(stringToCheck => stringToCheck.Filename.Contains(f.Name));
+                if (match != null)
+                {
+                    continue;
+                }
+                    var data =  this.resource.UploadBytesAsync(f).Result;
                 if(!string.IsNullOrEmpty(data))
                 {
                     //upload directly 
@@ -107,7 +124,6 @@ namespace exporter
                         {
                             Ids = result.newMediaItemResults.Select(x => x.mediaItem.Id).ToList()
                         }).Result;
-                        Console.WriteLine($"Added to Album: {album.title}");
                     }
                 }
             }
@@ -137,7 +153,7 @@ namespace exporter
         public async Task ImportMediaAsync()
         {
              await CreateHeirachy();
-  
+            Console.WriteLine("Completed Upload.");
         }
 
  
@@ -158,6 +174,21 @@ namespace exporter
             public PhotosResource(Google.Apis.Services.IClientService service)
             {
                 this.service = service;
+            }
+
+            public async Task<MediaList> GetMediaByAlbumAsync(string albumId)
+            {
+                var maxPageSizeCount = "100";
+                var result = new HttpResponseMessage();
+                var content = new StringContent(JsonConvert.SerializeObject(new MediaSearch { 
+                AlbumId = albumId,
+                PageSize = maxPageSizeCount
+                }));
+                result = await this.service.HttpClient.PostAsync(new Uri($"{service.BaseUri}/v1/mediaItems:search"), content);
+
+
+                var data = JsonConvert.DeserializeObject<MediaList>(result.Content.ReadAsStringAsync().Result);
+                return data;
             }
 
             public async Task<AlbumList> GetAlbumListAsync(string pageToken = "")
@@ -324,6 +355,15 @@ namespace exporter
         {
             [JsonProperty("newMediaItems")]
             public List<NewMediaItem> NewMediaItems { get; set; }
+
+            [JsonProperty("albumId")]
+            public string AlbumId { get; set; }
+        }
+
+        public class MediaSearch
+        {
+            [JsonProperty("pageSize")]
+            public string PageSize { get; set; }
 
             [JsonProperty("albumId")]
             public string AlbumId { get; set; }
