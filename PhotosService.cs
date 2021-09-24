@@ -10,7 +10,7 @@ using Google.Apis.Services;
 using Newtonsoft.Json;
 using MimeTypes;
 
-namespace exporter
+namespace importer
 {
     internal class PhotosService : Google.Apis.Services.BaseClientService
     {
