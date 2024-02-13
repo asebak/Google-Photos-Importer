@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
@@ -12,7 +11,7 @@ using MimeTypes;
 
 namespace importer
 {
-    internal class PhotosService : Google.Apis.Services.BaseClientService
+    internal class PhotosService : BaseClientService
     {
         private BaseClientService.Initializer initializer;
         private PhotosResource resource;
@@ -100,11 +99,13 @@ namespace importer
                     var data =  this.resource.UploadBytesAsync(f).Result;
                 if(!string.IsNullOrEmpty(data))
                 {
-                    //upload directly 
-                    var result = this.resource.BatchCreateAsync(new NewMediaList
+                    try
                     {
-                        AlbumId = album == null ? string.Empty : album.id,
-                        NewMediaItems = new List<NewMediaItem>
+                        //upload directly 
+                        var result = this.resource.BatchCreateAsync(new NewMediaList
+                        {
+                            AlbumId = album == null ? string.Empty : album.id,
+                            NewMediaItems = new List<NewMediaItem>
                             {
                                 new NewMediaItem
                                 {
@@ -116,14 +117,18 @@ namespace importer
                                     description = string.Empty
                                 }
                             }
-                    }).Result;
-
-                    if(result != null && album != null) 
-                    {
-                        var addedToAlbum = this.resource.BatchAddMediaItemsAsync(album.id, new MediaItemIds
-                        {
-                            Ids = result.newMediaItemResults.Select(x => x.mediaItem.Id).ToList()
                         }).Result;
+
+
+                        if (result != null && album != null)
+                        {
+                            var addedToAlbum = this.resource.BatchAddMediaItemsAsync(album.id, new MediaItemIds
+                            {
+                                Ids = result.newMediaItemResults.Select(x => x.mediaItem?.Id).ToList()
+                            }).Result;
+                        }
+                    }catch (Exception ex) {
+                        Console.WriteLine($"Exception occured: {ex.Message}, continuing to next file");
                     }
                 }
             }
@@ -161,7 +166,7 @@ namespace importer
         private DirectoryInfo PrepareDirectory()
         {
            var uploadsFolder = Environment.CurrentDirectory;
-           var directoryInfo = System.IO.Directory.CreateDirectory(uploadsFolder);
+           var directoryInfo = Directory.CreateDirectory(uploadsFolder);
            return directoryInfo;
         }
 
@@ -171,7 +176,7 @@ namespace importer
             private readonly Google.Apis.Services.IClientService service;
 
             /// <summary>Constructs a new resource.</summary>
-            public PhotosResource(Google.Apis.Services.IClientService service)
+            public PhotosResource(IClientService service)
             {
                 this.service = service;
                 this.service.HttpClient.Timeout = TimeSpan.FromMinutes(5);
